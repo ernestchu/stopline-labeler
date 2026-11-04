@@ -15,10 +15,11 @@ const canvas = $('view'), ctx = canvas.getContext('2d');
 const loupe = $('loupe'), lctx = loupe.getContext('2d');
 
 let manifest = null; // {version, frame_size, image_scale, frames: [id]}
-let session = null; // {started, labels: {id: {status, lines, t}}}
+let session = null; // {started, labels: {id: {status, lines, hard?, t}}}
 let index = 0;
 let lines = []; // the current frame's lines, in image pixels
 let status = null; // the current frame's explicit status: 'none' | 'unclear' | null
+let hard = false; // the current frame is flagged as a hard example
 let undo = [];
 let selected = -1;
 let img = null;
@@ -57,21 +58,19 @@ function preload() {
 }
 
 function commit() {
-  // store the current frame's label from `lines` and `status`
+  // store the current frame's label from `lines`, `status` and `hard`
   if (!manifest.frames.length) return;
   const id = fid();
   const s = scale();
+  const t = new Date().toISOString();
   if (lines.length) {
-    session.labels[id] = {
-      status: 'lines',
-      lines: lines.map((l) => l.map((v) => Math.round((v / s) * 100) / 100)),
-      t: new Date().toISOString(),
-    };
+    session.labels[id] = { status: 'lines', lines: lines.map((l) => l.map((v) => Math.round((v / s) * 100) / 100)), t };
   } else if (status) {
-    session.labels[id] = { status, lines: [], t: new Date().toISOString() };
+    session.labels[id] = { status, lines: [], t };
   } else {
-    delete session.labels[id];
+    delete session.labels[id]; // a hard flag alone is not a label: the frame stays unlabelled
   }
+  if (hard && session.labels[id]) session.labels[id].hard = true;
   saveSession();
 }
 
@@ -82,6 +81,7 @@ function open(i) {
   const s = scale();
   lines = lab ? lab.lines.map((l) => l.map((v) => v * s)) : [];
   status = lab && lab.status !== 'lines' ? lab.status : null;
+  hard = !!(lab && lab.hard);
   undo = []; selected = -1;
   img = image(fid());
   if (img.complete && img.naturalWidth) resetView(); else img.onload = () => { if (img === image(fid())) { resetView(); } };
@@ -94,6 +94,11 @@ function nextUnlabeled(from) {
   for (let i = from; i < manifest.frames.length; i++) if (!session.labels[manifest.frames[i]]) return i;
   for (let i = 0; i < from; i++) if (!session.labels[manifest.frames[i]]) return i;
   return Math.min(from, manifest.frames.length - 1);
+}
+
+function toggleHard() {
+  if (!manifest.frames.length) return;
+  pushUndo(); hard = !hard; updateUI();
 }
 
 function go(delta) { commit(); open(index + delta); }
@@ -191,11 +196,11 @@ function showLoupe(ix, iy, sx) {
 function hideLoupe() { loupe.style.display = 'none'; }
 
 // ---------- editing ----------
-function pushUndo() { undo.push(JSON.stringify({ lines, status })); if (undo.length > 100) undo.shift(); }
+function pushUndo() { undo.push(JSON.stringify({ lines, status, hard })); if (undo.length > 100) undo.shift(); }
 function doUndo() {
   const u = undo.pop();
   if (!u) return;
-  ({ lines, status } = JSON.parse(u));
+  ({ lines, status, hard } = JSON.parse(u));
   selected = -1; commit(); updateUI(); draw();
 }
 function deleteSelected() {
@@ -368,6 +373,7 @@ document.addEventListener('keydown', (e) => {
     case 'ArrowLeft': go(-1); break;
     case 'n': case 'N': done('none'); break;
     case 'u': case 'U': done('unclear'); break;
+    case 'h': case 'H': toggleHard(); break;
     case 'z': case 'Z': doUndo(); break;
     case 'Delete': case 'Backspace': deleteSelected(); break;
     case '0': case 'f': case 'F': if (img) resetView(); break;
@@ -385,14 +391,15 @@ function updateUI() {
   $('progress').textContent = total ? `${labeled} / ${total} labelled · frame ${index + 1}` : 'No frames';
   $('frameId').textContent = total ? fid() : '';
   const lab = total ? session.labels[fid()] : null;
-  $('badge').textContent = lines.length ? `${lines.length} line${lines.length > 1 ? 's' : ''}` :
-    status === 'none' ? 'no line' : status === 'unclear' ? 'unclear' : '';
+  $('badge').textContent = [lines.length ? `${lines.length} line${lines.length > 1 ? 's' : ''}` :
+    status === 'none' ? 'no line' : status === 'unclear' ? 'unclear' : '', hard ? 'hard' : ''].filter(Boolean).join(' · ');
+  $('hardBtn').classList.toggle('on', hard);
   $('noneBtn').classList.toggle('on', status === 'none' && !lines.length);
   $('unclearBtn').classList.toggle('on', status === 'unclear' && !lines.length);
   $('delBtn').disabled = selected < 0;
   $('undoBtn').disabled = !undo.length;
   $('prevBtn').disabled = !total || index === 0;
-  for (const b of ['noneBtn', 'unclearBtn', 'nextBtn']) $(b).disabled = !total;
+  for (const b of ['noneBtn', 'unclearBtn', 'hardBtn', 'nextBtn']) $(b).disabled = !total;
   $('downloadBtn').disabled = !Object.keys(session.labels).length;
   void lab;
 }
@@ -422,6 +429,7 @@ $('prevBtn').onclick = () => go(-1);
 $('nextBtn').onclick = () => done(null);
 $('noneBtn').onclick = () => done('none');
 $('unclearBtn').onclick = () => done('unclear');
+$('hardBtn').onclick = toggleHard;
 $('undoBtn').onclick = doUndo;
 $('delBtn').onclick = deleteSelected;
 $('downloadBtn').onclick = download;
