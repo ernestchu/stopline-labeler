@@ -6,6 +6,9 @@ const STORE = 'stopline-session-v1';
 const HANDLE_MOUSE = 10, HANDLE_TOUCH = 24; // css px to grab an end point
 const TAP = 6; // css px a press may move and still be a tap
 const MAX_ZOOM = 16;
+// a border between the picture and the screen edge, wider on touch screens, so an end point at the
+// picture's edge can be reached without touching the screen's edge (drags past the picture snap to it)
+const margin = () => (matchMedia('(pointer: coarse)').matches ? 32 : 12);
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('view'), ctx = canvas.getContext('2d');
@@ -109,9 +112,13 @@ function resize() {
   if (img && img.naturalWidth) clampView();
   draw();
 }
+function fitScale(r) {
+  const m = margin();
+  return Math.min((r.width - 2 * m) / img.naturalWidth, (r.height - 2 * m) / img.naturalHeight);
+}
 function resetView() {
   const r = canvas.getBoundingClientRect();
-  fit = Math.min(r.width / img.naturalWidth, r.height / img.naturalHeight);
+  fit = fitScale(r);
   view.k = fit;
   view.x = (r.width - img.naturalWidth * fit) / 2;
   view.y = (r.height - img.naturalHeight * fit) / 2;
@@ -119,11 +126,11 @@ function resetView() {
 }
 function clampView() {
   const r = canvas.getBoundingClientRect();
-  fit = Math.min(r.width / img.naturalWidth, r.height / img.naturalHeight);
+  fit = fitScale(r);
   view.k = Math.max(fit, Math.min(fit * MAX_ZOOM, view.k));
-  const w = img.naturalWidth * view.k, h = img.naturalHeight * view.k;
-  view.x = w <= r.width ? (r.width - w) / 2 : Math.min(0, Math.max(r.width - w, view.x));
-  view.y = h <= r.height ? (r.height - h) / 2 : Math.min(0, Math.max(r.height - h, view.y));
+  const m = margin(), w = img.naturalWidth * view.k, h = img.naturalHeight * view.k;
+  view.x = w <= r.width - 2 * m ? (r.width - w) / 2 : Math.min(m, Math.max(r.width - m - w, view.x));
+  view.y = h <= r.height - 2 * m ? (r.height - h) / 2 : Math.min(m, Math.max(r.height - m - h, view.y));
 }
 function zoomAt(sx, sy, factor) {
   const ix = (sx - view.x) / view.k, iy = (sy - view.y) / view.k;
