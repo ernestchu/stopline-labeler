@@ -369,7 +369,8 @@ document.addEventListener('keydown', (e) => {
   if (mod && e.key.toLowerCase() === 'z') { doUndo(); e.preventDefault(); return; }
   if (mod) return;
   switch (e.key) {
-    case 'Enter': case 'ArrowRight': done(null); break;
+    case 'Enter': done(null); break;
+    case 'ArrowRight': go(1); break;
     case 'ArrowLeft': go(-1); break;
     case 'n': case 'N': done('none'); break;
     case 'u': case 'U': done('unclear'); break;
@@ -399,6 +400,7 @@ function updateUI() {
   $('delBtn').disabled = selected < 0;
   $('undoBtn').disabled = !undo.length;
   $('prevBtn').disabled = !total || index === 0;
+  $('fwdBtn').disabled = !total || index === total - 1;
   for (const b of ['noneBtn', 'unclearBtn', 'hardBtn', 'nextBtn']) $(b).disabled = !total;
   $('downloadBtn').disabled = !Object.keys(session.labels).length;
   void lab;
@@ -426,6 +428,7 @@ function download() {
 }
 
 $('prevBtn').onclick = () => go(-1);
+$('fwdBtn').onclick = () => go(1);
 $('nextBtn').onclick = () => done(null);
 $('noneBtn').onclick = () => done('none');
 $('unclearBtn').onclick = () => done('unclear');
