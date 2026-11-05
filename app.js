@@ -392,7 +392,7 @@ function updateUI() {
   $('progress').textContent = total ? `${labeled} / ${total} labelled · frame ${index + 1}` : 'No frames';
   $('frameId').textContent = total ? fid() : '';
   const lab = total ? session.labels[fid()] : null;
-  $('badge').textContent = [lines.length ? `${lines.length} line${lines.length > 1 ? 's' : ''}` :
+  $('badge').textContent = [total && fid().endsWith('w') ? 'wide' : '', lines.length ? `${lines.length} line${lines.length > 1 ? 's' : ''}` :
     status === 'none' ? 'no line' : status === 'unclear' ? 'unclear' : '', hard ? 'hard' : ''].filter(Boolean).join(' · ');
   $('hardBtn').classList.toggle('on', hard);
   $('noneBtn').classList.toggle('on', status === 'none' && !lines.length);
@@ -411,7 +411,7 @@ function download() {
   const out = {
     format: 'stopline-labels/1',
     manifest_version: manifest.version,
-    coordinates: 'openpilot medmodel frame pixels, 512x256 (x right, y down); a line is [x1, y1, x2, y2]',
+    coordinates: 'openpilot model frame pixels (medmodel; sbigmodel for wide-camera ids, ending in w), 512x256 (x right, y down); a line is [x1, y1, x2, y2]',
     session_started: session.started,
     exported: new Date().toISOString(),
     labels: session.labels,
