@@ -1,8 +1,9 @@
 'use strict';
 // Stop-line labeller. Frames are openpilot medmodel frames rendered at IMAGE_SCALE x; labels are stored in
-// medmodel pixels (512x256): each stop line is two end points [x1, y1, x2, y2].
+// medmodel pixels (512x256): a frame has at most one stop line, in the ego lane, two end points [x1, y1, x2, y2].
+// A frame may come with a suggested label (prefill.json), which counts once confirmed or edited here.
 
-const STORE = 'stopline-session-v1';
+const STORE = 'stopline-session-v2';
 const HANDLE_MOUSE = 10, HANDLE_TOUCH = 24; // css px to grab an end point
 const TAP = 6; // css px a press may move and still be a tap
 const MAX_ZOOM = 16;
@@ -16,11 +17,14 @@ const loupe = $('loupe'), lctx = loupe.getContext('2d');
 
 let manifest = null; // {version, frame_size, image_scale, frames: [id]}
 let session = null; // {started, labels: {id: {status, lines, hard?, t}}}
+let prefill = {}; // {id: {status, lines, hard?, why?, lead?, lanes?, orig?}}: suggested labels and what to check them against
+let overlays = true; // draw the lead box, lane boundaries and the original line
 let index = 0;
 let lines = []; // the current frame's lines, in image pixels
 let status = null; // the current frame's explicit status: 'none' | 'unclear' | null
 let hard = false; // the current frame is flagged as a hard example
 let undo = [];
+let confirmed = false; // the current frame already had a label from this session when opened
 let selected = -1;
 let img = null;
 const cache = new Map();
@@ -77,7 +81,8 @@ function commit() {
 function open(i) {
   if (!manifest.frames.length) { $('empty').hidden = false; updateUI(); return; }
   index = Math.max(0, Math.min(manifest.frames.length - 1, i));
-  const lab = session.labels[fid()];
+  confirmed = !!session.labels[fid()];
+  const lab = session.labels[fid()] || prefill[fid()];
   const s = scale();
   lines = lab ? lab.lines.map((l) => l.map((v) => v * s)) : [];
   status = lab && lab.status !== 'lines' ? lab.status : null;
@@ -101,7 +106,8 @@ function toggleHard() {
   pushUndo(); hard = !hard; updateUI();
 }
 
-function go(delta) { commit(); open(index + delta); }
+// stepping past a frame only keeps what was changed there: a suggested label is confirmed with Next or No line
+function go(delta) { if (undo.length) commit(); open(index + delta); }
 function done(st) {
   if (st) { if (lines.length) { pushUndo(); lines = []; } status = st; }
   commit();
@@ -158,7 +164,31 @@ function draw() {
   ctx.imageSmoothingEnabled = view.k < 2.5 * fit * 1.0 ? true : false;
   ctx.drawImage(img, 0, 0);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  if (overlays) drawOverlays();
   lines.forEach((l, i) => drawLine(ctx, l, i === selected, toScreen));
+}
+function drawOverlays() {
+  const p = prefill[fid()];
+  if (!p) return;
+  const s = scale(), map = (x, y) => toScreen(x * s, y * s);
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = '#3ddc84';
+  for (const curve of p.lanes || []) {
+    ctx.beginPath();
+    curve.forEach(([x, y], i) => { const [a, b] = map(x, y); if (i) ctx.lineTo(a, b); else ctx.moveTo(a, b); });
+    ctx.stroke();
+  }
+  if (p.orig) {
+    const [ax, ay] = map(p.orig[0], p.orig[1]), [bx, by] = map(p.orig[2], p.orig[3]);
+    ctx.strokeStyle = '#ff6b6b'; ctx.setLineDash([6, 5]);
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  if (p.lead) {
+    const [ax, ay] = map(p.lead[0], p.lead[1]), [bx, by] = map(p.lead[2], p.lead[3]);
+    ctx.strokeStyle = '#ff9f1c'; ctx.lineWidth = 2;
+    ctx.strokeRect(ax, ay, bx - ax, by - ay);
+  }
 }
 function drawLine(c, l, sel, map) {
   const [ax, ay] = map(l[0], l[1]), [bx, by] = map(l[2], l[3]);
@@ -201,7 +231,9 @@ function doUndo() {
   const u = undo.pop();
   if (!u) return;
   ({ lines, status, hard } = JSON.parse(u));
-  selected = -1; commit(); updateUI(); draw();
+  selected = -1;
+  if (!undo.length && !confirmed) { delete session.labels[fid()]; saveSession(); } else commit(); // back to how it arrived
+  updateUI(); draw();
 }
 function deleteSelected() {
   if (selected < 0) return;
@@ -253,7 +285,7 @@ canvas.addEventListener('pointerdown', (e) => {
   const touch = e.pointerType !== 'mouse';
 
   if (pointers.size === 2) { // second finger: abandon any line in progress, pinch/pan
-    if (gesture && gesture.kind === 'draw' && gesture.added) { lines.pop(); undo.pop(); }
+    if (gesture && gesture.kind === 'draw' && gesture.added) ({ lines, status } = JSON.parse(undo.pop()));
     if (gesture && gesture.kind === 'end' && gesture.before) { lines = JSON.parse(gesture.before); undo.pop(); }
     hideLoupe();
     const [p, q] = [...pointers.values()];
@@ -303,11 +335,11 @@ canvas.addEventListener('pointermove', (e) => {
     const [bx, by] = clampImg(...toImage(sx, sy));
     if (!gesture.added) {
       pushUndo();
-      lines.push([gesture.ix, gesture.iy, bx, by]);
+      lines = [[gesture.ix, gesture.iy, bx, by]]; // one stop line in a frame: a new one replaces it
       gesture.added = true; status = null;
-      selected = lines.length - 1;
+      selected = 0;
     } else {
-      lines[lines.length - 1] = [gesture.ix, gesture.iy, bx, by];
+      lines[0] = [gesture.ix, gesture.iy, bx, by];
     }
     showLoupe(bx, by, sx); draw();
   } else if (gesture.kind === 'end') {
@@ -332,8 +364,8 @@ function endPointer(e) {
   hideLoupe();
   if (gesture.kind === 'draw') {
     if (gesture.added) {
-      const l = lines[lines.length - 1];
-      if (Math.hypot((l[2] - l[0]) * view.k, (l[3] - l[1]) * view.k) < TAP) { lines.pop(); undo.pop(); selected = -1; }
+      const l = lines[0];
+      if (Math.hypot((l[2] - l[0]) * view.k, (l[3] - l[1]) * view.k) < TAP) { ({ lines, status } = JSON.parse(undo.pop())); selected = -1; }
       commit();
     } else { // a tap: select a line, or double-tap to reset the view
       const now = performance.now();
@@ -378,6 +410,7 @@ document.addEventListener('keydown', (e) => {
     case 'z': case 'Z': doUndo(); break;
     case 'Delete': case 'Backspace': deleteSelected(); break;
     case '0': case 'f': case 'F': if (img) resetView(); break;
+    case 'v': case 'V': overlays = !overlays; draw(); break;
     case 'Escape': selected = -1; updateUI(); draw(); break;
     default: return;
   }
@@ -391,9 +424,9 @@ function updateUI() {
   const labeled = manifest ? manifest.frames.filter((id) => session.labels[id]).length : 0;
   $('progress').textContent = total ? `${labeled} / ${total} labelled · frame ${index + 1}` : 'No frames';
   $('frameId').textContent = total ? fid() : '';
-  const lab = total ? session.labels[fid()] : null;
-  $('badge').textContent = [total && fid().endsWith('w') ? 'wide' : '', lines.length ? `${lines.length} line${lines.length > 1 ? 's' : ''}` :
-    status === 'none' ? 'no line' : status === 'unclear' ? 'unclear' : '', hard ? 'hard' : ''].filter(Boolean).join(' · ');
+  const p = total ? prefill[fid()] : null;
+  $('badge').textContent = [lines.length ? 'line' : status === 'none' ? 'no line' : status === 'unclear' ? 'unclear' : '',
+    hard ? 'hard' : '', p && p.why && !(total && session.labels[fid()]) ? p.why : ''].filter(Boolean).join(' · ');
   $('hardBtn').classList.toggle('on', hard);
   $('noneBtn').classList.toggle('on', status === 'none' && !lines.length);
   $('unclearBtn').classList.toggle('on', status === 'unclear' && !lines.length);
@@ -403,7 +436,6 @@ function updateUI() {
   $('fwdBtn').disabled = !total || index === total - 1;
   for (const b of ['noneBtn', 'unclearBtn', 'hardBtn', 'nextBtn']) $(b).disabled = !total;
   $('downloadBtn').disabled = !Object.keys(session.labels).length;
-  void lab;
 }
 
 function download() {
@@ -411,7 +443,7 @@ function download() {
   const out = {
     format: 'stopline-labels/1',
     manifest_version: manifest.version,
-    coordinates: 'openpilot model frame pixels (medmodel; sbigmodel for wide-camera ids, ending in w), 512x256 (x right, y down); a line is [x1, y1, x2, y2]',
+    coordinates: 'openpilot medmodel frame pixels, 512x256 (x right, y down); a line is [x1, y1, x2, y2]',
     session_started: session.started,
     exported: new Date().toISOString(),
     labels: session.labels,
@@ -456,6 +488,12 @@ window.addEventListener('resize', resize);
     manifest = await (await fetch(`manifest.json?t=${Date.now()}`, { cache: 'no-store' })).json();
   } catch (e) {
     $('progress').textContent = 'Could not load manifest.json';
+    return;
+  }
+  try {
+    prefill = await (await fetch(`prefill.json?v=${manifest.version}`)).json();
+  } catch (e) {
+    $('progress').textContent = 'Could not load prefill.json';
     return;
   }
   // labels for frames no longer listed were delivered and merged: drop them
