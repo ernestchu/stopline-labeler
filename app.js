@@ -16,13 +16,12 @@ const canvas = $('view'), ctx = canvas.getContext('2d');
 const loupe = $('loupe'), lctx = loupe.getContext('2d');
 
 let manifest = null; // {version, frame_size, image_scale, frames: [id]}
-let session = null; // {started, labels: {id: {status, lines, hard?, t}}}
-let prefill = {}; // {id: {status, lines, hard?, why?, lead?, lanes?, orig?}}: suggested labels and what to check them against
+let session = null; // {started, labels: {id: {status, lines, t}}}
+let prefill = {}; // {id: {status, lines, why?, lead?, lanes?, orig?}}: suggested labels and what to check them against
 let overlays = true; // draw the lead box, lane boundaries and the original line
 let index = 0;
 let lines = []; // the current frame's lines, in image pixels
-let status = null; // the current frame's explicit status: 'none' | 'unclear' | null
-let hard = false; // the current frame is flagged as a hard example
+let status = null; // the current frame's explicit status: 'none' | null
 let undo = [];
 let confirmed = false; // the current frame already had a label from this session when opened
 let selected = -1;
@@ -62,7 +61,7 @@ function preload() {
 }
 
 function commit() {
-  // store the current frame's label from `lines`, `status` and `hard`
+  // store the current frame's label from `lines` and `status`
   if (!manifest.frames.length) return;
   const id = fid();
   const s = scale();
@@ -72,9 +71,8 @@ function commit() {
   } else if (status) {
     session.labels[id] = { status, lines: [], t };
   } else {
-    delete session.labels[id]; // a hard flag alone is not a label: the frame stays unlabelled
+    delete session.labels[id];
   }
-  if (hard && session.labels[id]) session.labels[id].hard = true;
   saveSession();
 }
 
@@ -86,7 +84,6 @@ function open(i) {
   const s = scale();
   lines = lab ? lab.lines.map((l) => l.map((v) => v * s)) : [];
   status = lab && lab.status !== 'lines' ? lab.status : null;
-  hard = !!(lab && lab.hard);
   undo = []; selected = -1;
   img = image(fid());
   if (img.complete && img.naturalWidth) resetView(); else img.onload = () => { if (img === image(fid())) { resetView(); } };
@@ -99,11 +96,6 @@ function nextUnlabeled(from) {
   for (let i = from; i < manifest.frames.length; i++) if (!session.labels[manifest.frames[i]]) return i;
   for (let i = 0; i < from; i++) if (!session.labels[manifest.frames[i]]) return i;
   return Math.min(from, manifest.frames.length - 1);
-}
-
-function toggleHard() {
-  if (!manifest.frames.length) return;
-  pushUndo(); hard = !hard; updateUI();
 }
 
 // stepping past a frame only keeps what was changed there: a suggested label is confirmed with Next or No line
@@ -226,11 +218,11 @@ function showLoupe(ix, iy, sx) {
 function hideLoupe() { loupe.style.display = 'none'; }
 
 // ---------- editing ----------
-function pushUndo() { undo.push(JSON.stringify({ lines, status, hard })); if (undo.length > 100) undo.shift(); }
+function pushUndo() { undo.push(JSON.stringify({ lines, status })); if (undo.length > 100) undo.shift(); }
 function doUndo() {
   const u = undo.pop();
   if (!u) return;
-  ({ lines, status, hard } = JSON.parse(u));
+  ({ lines, status } = JSON.parse(u));
   selected = -1;
   if (!undo.length && !confirmed) { delete session.labels[fid()]; saveSession(); } else commit(); // back to how it arrived
   updateUI(); draw();
@@ -405,8 +397,6 @@ document.addEventListener('keydown', (e) => {
     case 'ArrowRight': go(1); break;
     case 'ArrowLeft': go(-1); break;
     case 'n': case 'N': done('none'); break;
-    case 'u': case 'U': done('unclear'); break;
-    case 'h': case 'H': toggleHard(); break;
     case 'z': case 'Z': doUndo(); break;
     case 'Delete': case 'Backspace': deleteSelected(); break;
     case '0': case 'f': case 'F': if (img) resetView(); break;
@@ -425,16 +415,14 @@ function updateUI() {
   $('progress').textContent = total ? `${labeled} / ${total} labelled · frame ${index + 1}` : 'No frames';
   $('frameId').textContent = total ? fid() : '';
   const p = total ? prefill[fid()] : null;
-  $('badge').textContent = [lines.length ? 'line' : status === 'none' ? 'no line' : status === 'unclear' ? 'unclear' : '',
-    hard ? 'hard' : '', p && p.why && !(total && session.labels[fid()]) ? p.why : ''].filter(Boolean).join(' · ');
-  $('hardBtn').classList.toggle('on', hard);
+  $('badge').textContent = [lines.length ? 'line' : status === 'none' ? 'no line' : '',
+    p && p.why && !(total && session.labels[fid()]) ? p.why : ''].filter(Boolean).join(' · ');
   $('noneBtn').classList.toggle('on', status === 'none' && !lines.length);
-  $('unclearBtn').classList.toggle('on', status === 'unclear' && !lines.length);
   $('delBtn').disabled = selected < 0;
   $('undoBtn').disabled = !undo.length;
   $('prevBtn').disabled = !total || index === 0;
   $('fwdBtn').disabled = !total || index === total - 1;
-  for (const b of ['noneBtn', 'unclearBtn', 'hardBtn', 'nextBtn']) $(b).disabled = !total;
+  for (const b of ['noneBtn', 'nextBtn']) $(b).disabled = !total;
   $('downloadBtn').disabled = !Object.keys(session.labels).length;
 }
 
@@ -463,8 +451,6 @@ $('prevBtn').onclick = () => go(-1);
 $('fwdBtn').onclick = () => go(1);
 $('nextBtn').onclick = () => done(null);
 $('noneBtn').onclick = () => done('none');
-$('unclearBtn').onclick = () => done('unclear');
-$('hardBtn').onclick = toggleHard;
 $('undoBtn').onclick = doUndo;
 $('delBtn').onclick = deleteSelected;
 $('downloadBtn').onclick = download;
@@ -499,6 +485,10 @@ window.addEventListener('resize', resize);
   // labels for frames no longer listed were delivered and merged: drop them
   const listed = new Set(manifest.frames);
   for (const id of Object.keys(session.labels)) if (!listed.has(id)) delete session.labels[id];
+  for (const lab of Object.values(session.labels)) { // from before unclear and hard were retired
+    if (lab.status === 'unclear') { lab.status = 'none'; lab.lines = []; }
+    delete lab.hard;
+  }
   saveSession();
   resize();
   open(nextUnlabeled(0));
