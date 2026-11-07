@@ -100,13 +100,13 @@ function nextUnlabeled(from) {
 
 // stepping past a frame only keeps what was changed there: a suggested label is confirmed with Next or No line
 function go(delta) { if (undo.length) commit(); open(index + delta); }
-// one click: the student's line becomes the label, and on to the next frame
+// one click: the student's line replaces the current one, to check or adjust before Next
 function useStudent() {
   const p = manifest.frames.length ? prefill[fid()] : null;
   if (!p || !p.student) return;
   pushUndo();
-  lines = [p.student.map((v) => v * scale())]; status = null; selected = -1;
-  done(null);
+  lines = [p.student.map((v) => v * scale())]; status = null; selected = 0;
+  commit(); updateUI(); draw();
 }
 function done(st) {
   if (st) { if (lines.length) { pushUndo(); lines = []; } status = st; }
