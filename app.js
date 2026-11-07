@@ -100,6 +100,14 @@ function nextUnlabeled(from) {
 
 // stepping past a frame only keeps what was changed there: a suggested label is confirmed with Next or No line
 function go(delta) { if (undo.length) commit(); open(index + delta); }
+// one click: the student's line becomes the label, and on to the next frame
+function useStudent() {
+  const p = manifest.frames.length ? prefill[fid()] : null;
+  if (!p || !p.student) return;
+  pushUndo();
+  lines = [p.student.map((v) => v * scale())]; status = null; selected = -1;
+  done(null);
+}
 function done(st) {
   if (st) { if (lines.length) { pushUndo(); lines = []; } status = st; }
   commit();
@@ -397,6 +405,7 @@ document.addEventListener('keydown', (e) => {
     case 'ArrowRight': go(1); break;
     case 'ArrowLeft': go(-1); break;
     case 'n': case 'N': done('none'); break;
+    case 's': case 'S': useStudent(); break;
     case 'z': case 'Z': doUndo(); break;
     case 'Delete': case 'Backspace': deleteSelected(); break;
     case '0': case 'f': case 'F': if (img) resetView(); break;
@@ -423,6 +432,7 @@ function updateUI() {
   $('prevBtn').disabled = !total || index === 0;
   $('fwdBtn').disabled = !total || index === total - 1;
   for (const b of ['noneBtn', 'nextBtn']) $(b).disabled = !total;
+  $('studentBtn').disabled = !(p && p.student);
   $('downloadBtn').disabled = !Object.keys(session.labels).length;
 }
 
@@ -451,6 +461,7 @@ $('prevBtn').onclick = () => go(-1);
 $('fwdBtn').onclick = () => go(1);
 $('nextBtn').onclick = () => done(null);
 $('noneBtn').onclick = () => done('none');
+$('studentBtn').onclick = useStudent;
 $('undoBtn').onclick = doUndo;
 $('delBtn').onclick = deleteSelected;
 $('downloadBtn').onclick = download;
@@ -477,7 +488,7 @@ window.addEventListener('resize', resize);
     return;
   }
   try {
-    prefill = await (await fetch(`prefill.json?v=${manifest.version}`)).json();
+    prefill = await (await fetch(`prefill.json?t=${Date.now()}`, { cache: 'no-store' })).json();
   } catch (e) {
     $('progress').textContent = 'Could not load prefill.json';
     return;
