@@ -36,7 +36,7 @@
 
 <dialog id="help">
   <h2>Reviewing windows</h2>
-  <p>Each video is one window: about two seconds of driving (41 frames at 20 fps) around a frame you labelled. It loops.</p>
+  <p>Each video is one window: <span id="winHelp">about two seconds of driving</span> around a frame you labelled. It loops.</p>
   <p>The <span style="color:#3ddc84">green line</span> is your label from the <b>labelled frame</b> (marked in yellow at the top), carried into every other frame with the car's motion. The strip at the bottom shows every frame of the window: <span style="color:#3ddc84">green</span> a line, <b>dark</b> no line, <span style="color:#999">grey</span> not scored (too near the guideline's distance limits, or carried too far). The white box is the current frame.</p>
   <p><b>Keep</b> (K) the window if the green line sits on the stop line in every frame that shows one, and no frame marked "no line" shows a stop line in your lane that should count. <b>Drop</b> (D) it if any frame is wrong. A window is kept or dropped as a whole; nothing is edited.</p>
   <p>After a decision the next undecided window opens. <b>◀ ▶</b> (← →) move one window at a time; <b>½×</b> (S) slows the video; Space pauses. Decisions stay in this browser until you press <b>Download</b>; send me that file.</p>
@@ -47,6 +47,6 @@
   </div>
 </dialog>
 
-<script src="app.js?v=w1"></script>
+<script src="app.js?v=w2"></script>
 </body>
 </html>

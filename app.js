@@ -1,7 +1,8 @@
 'use strict';
 // Keep or drop whole temporal test windows, shown as looping videos (windows/<id>.mp4, listed in windows.json).
 const $ = (id) => document.getElementById(id);
-const STORE = 'stopline-windows-v1';
+let STORE = 'stopline-windows-v1'; // per split: test decisions and training decisions never mix
+let split = 'test';
 const video = $('video');
 let list = [];      // [{id, kind, frames, line, unknown}]
 let session = null; // {started, decisions: {id: {keep, t}}}
@@ -64,13 +65,13 @@ function updateUI() {
 }
 function download() {
   const out = {
-    kind: 'windows', session_started: session.started, downloaded: new Date().toISOString(),
+    kind: 'windows', split, session_started: session.started, downloaded: new Date().toISOString(),
     decisions: session.decisions,
   };
   const blob = new Blob([JSON.stringify(out, null, 1)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url; a.download = `windows-${session.started.slice(0, 19).replace(/[:T]/g, '-')}.json`;
+  a.href = url; a.download = `windows-${split}-${session.started.slice(0, 19).replace(/[:T]/g, '-')}.json`;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
@@ -112,8 +113,12 @@ document.addEventListener('keydown', (e) => {
 });
 
 (async function main() {
-  session = loadSession();
   list = (await (await fetch('windows.json', { cache: 'no-cache' })).json()).windows;
+  split = (list[0] && list[0].split) || 'test';
+  if (split !== 'test') STORE = `stopline-windows-${split}-v1`;
+  session = loadSession();
+  $('winHelp').textContent = split === 'test' ? 'about two seconds of driving (41 frames at 20 fps)'
+    : 'about two seconds of driving (every second frame, 21 frames, played at 10 fps: real time)';
   const listed = new Set(list.map((w) => w.id));
   for (const id of Object.keys(session.decisions)) if (!listed.has(id)) delete session.decisions[id];
   saveSession();
